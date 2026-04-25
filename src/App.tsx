@@ -493,7 +493,7 @@ export default function App() {
   const topPositionBrand = getTopBrand(report, "position");
 
   return (
-    <>
+    <div className="appFrame">
       <main className="shell">
         <section className="hero">
           <div>
@@ -622,9 +622,8 @@ export default function App() {
         endDate={endDate}
         projectId={selectedProjectId}
         projectName={selectedProject?.name ?? "Peec project"}
-        reportCount={report.length}
         startDate={startDate}
       />
-    </>
+    </div>
   );
 }

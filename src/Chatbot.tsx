@@ -1,10 +1,9 @@
-import { FormEvent, useState } from "react";
+import { FormEvent, KeyboardEvent, useState } from "react";
 
 type ChatbotProps = {
   endDate: string;
   projectId: string;
   projectName: string;
-  reportCount: number;
   startDate: string;
 };
 
@@ -72,7 +71,6 @@ export default function Chatbot({
   endDate,
   projectId,
   projectName,
-  reportCount,
   startDate,
 }: ChatbotProps) {
   const [isOpen, setIsOpen] = useState(false);
@@ -80,9 +78,7 @@ export default function Chatbot({
   const [isLoading, setIsLoading] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([welcomeMessage]);
 
-  const submitMessage = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-
+  const sendMessage = async () => {
     const content = input.trim();
 
     if (!content || isLoading) {
@@ -150,6 +146,22 @@ export default function Chatbot({
     }
   };
 
+  const submitMessage = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    await sendMessage();
+  };
+
+  const handleInputKeyDown = (
+    event: KeyboardEvent<HTMLTextAreaElement>,
+  ) => {
+    if (event.key !== "Enter" || event.shiftKey) {
+      return;
+    }
+
+    event.preventDefault();
+    void sendMessage();
+  };
+
   return (
     <div className={`chatDock ${isOpen ? "isOpen" : "isCollapsed"}`}>
       <button
@@ -162,14 +174,6 @@ export default function Chatbot({
       </button>
 
       <aside aria-hidden={!isOpen} className="chatPanel">
-        <header className="chatHeader">
-          <div>
-            <p className="eyebrow">GPT-5.4 Nano</p>
-            <h2>Peec AI chat</h2>
-          </div>
-          <p>{reportCount} brand rows in context</p>
-        </header>
-
         <div className="chatMessages" role="log">
           {messages.map((message) => (
             <article
@@ -180,12 +184,15 @@ export default function Chatbot({
             </article>
           ))}
           {isLoading ? (
-            <article className="chatMessage assistant">Writing answer...</article>
+            <article className="chatMessage assistant">
+              Writing answer...
+            </article>
           ) : null}
         </div>
 
         <form className="chatForm" onSubmit={submitMessage}>
           <textarea
+            onKeyDown={handleInputKeyDown}
             onChange={(event) => setInput(event.target.value)}
             placeholder="Ask about visibility, sentiment, or competitors..."
             rows={3}
