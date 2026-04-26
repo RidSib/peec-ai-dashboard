@@ -27,14 +27,19 @@ const baseUrl = process.env.PEEC_BASE_URL ?? "https://api.peec.ai/customer/v1";
 const apiKey = process.env.PEEC_API_KEY;
 const projectId = process.env.PEEC_PROJECT_ID;
 const aiApiKey = process.env.AZURE_OPENAI_API_KEY;
-const aiModel = process.env.AZURE_OPENAI_MODEL ?? "gpt-5.4-nano";
+const aiModel = process.env.AZURE_OPENAI_MODEL ?? "gpt-5.5-1";
 const aiResponsesUrl = process.env.AZURE_OPENAI_RESPONSES_URL;
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.resolve(__dirname, "..");
 const distDir = path.join(rootDir, "dist");
+const bodyJsonLimit = process.env.BODY_JSON_LIMIT ?? "10mb";
 
-app.use(express.json());
+app.use(
+  express.json({
+    limit: bodyJsonLimit,
+  }),
+);
 
 function requireApiKey(response) {
   if (apiKey) {
@@ -236,6 +241,70 @@ function createCopilotLanguageModel() {
   return provider.chat(aiModel);
 }
 
+/**
+ * When the client runs CopilotKit frontend tools, the next HTTP request can
+ * include assistant toolCalls without matching `role: "tool"` rows yet.
+ * `streamText` then throws AI_MissingToolResultsError. Add minimal placeholders
+ * so every toolCallId has a result before the agent runs.
+ */
+function ensureAgUiToolResultsForCopilot(messages) {
+  if (!Array.isArray(messages)) {
+    return messages;
+  }
+
+  const withResult = new Set(
+    messages
+      .filter((m) => m?.role === "tool" && m.toolCallId)
+      .map((m) => m.toolCallId),
+  );
+
+  const out = [];
+
+  for (const msg of messages) {
+    out.push(msg);
+
+    if (msg?.role !== "assistant" || !msg.toolCalls?.length) {
+      continue;
+    }
+
+    for (const tc of msg.toolCalls) {
+      const id = tc?.id;
+
+      if (!id || withResult.has(id)) {
+        continue;
+      }
+
+      withResult.add(id);
+      out.push({
+        content: JSON.stringify({
+          message:
+            "Client tool result was not on the server message list; " +
+            "placeholder so the run can continue.",
+          ok: true,
+        }),
+        role: "tool",
+        toolCallId: id,
+      });
+    }
+  }
+
+  return out;
+}
+
+class DefaultAgentWithToolResultGuard extends BuiltInAgent {
+  run(input) {
+    const next =
+      input && typeof input === "object"
+        ? {
+            ...input,
+            messages: ensureAgUiToolResultsForCopilot(input.messages),
+          }
+        : input;
+
+    return super.run(next);
+  }
+}
+
 const peecRuntimeTools = [
   defineTool({
     name: "listPeecReadTools",
@@ -382,13 +451,20 @@ const copilotLanguageModel = createCopilotLanguageModel();
 const copilotRuntime = copilotLanguageModel
   ? new CopilotRuntime({
       agents: {
-        default: new BuiltInAgent({
+        default: new DefaultAgentWithToolResultGuard({
           maxSteps: 5,
           model: copilotLanguageModel,
           prompt: [
             "You are the GoGeo dashboard copilot, powered by Peec AI.",
-            "Use frontend tools for UI changes and Peec tools for data lookup.",
-            "Keep answers concise, practical, and grounded in dashboard state.",
+            "Proactively answer Peec data questions with the Peec AI MCP read",
+            "tools: call listPeecReadTools when needed, then callPeecReadTool",
+            "with the correct toolName and arguments. Prefer MCP-grounded",
+            "facts over assumptions or stale chat context alone.",
+            "Use showPieChart for share, showVerticalBarChart for bar compare,",
+            "and showLineChart for one or more lines: xLabels in order plus a",
+            "series array of { label, values } per line (values length = xLabels).",
+            "Use other frontend tools for dashboard UI (navigation, focus,",
+            "sorting, comparison). Keep answers concise and practical.",
           ].join(" "),
           tools: peecRuntimeTools,
         }),

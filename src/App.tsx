@@ -12,6 +12,9 @@ import {
   useFrontendTool,
 } from "@copilotkit/react-core";
 import Chatbot from "./Chatbot";
+import { ChatPieChart } from "./ChatPieChart";
+import { CopilotLineChart } from "./CopilotLineChart";
+import { CopilotVerticalBarChart } from "./CopilotVerticalBarChart";
 
 type Project = {
   id: string;
@@ -62,6 +65,39 @@ type CompanySort = {
 };
 
 type ScrollTarget = "companyNav" | "mainView" | "projectCard";
+
+type MainChartPayload =
+  | {
+    kind: "line";
+    series: { label: string; values: number[] }[];
+    title?: string;
+    xLabels: string[];
+    yLabel?: string;
+  }
+  | { kind: "pie"; labels: string[]; title?: string; values: number[] }
+  | { kind: "vbar"; labels: string[]; title?: string; values: number[] };
+
+function errNonnegLabelValues(
+  labels: string[] | undefined,
+  values: number[] | undefined,
+) {
+  if (!labels?.length) {
+    return "At least one label is required.";
+  }
+  if (!values?.length) {
+    return "At least one value is required.";
+  }
+  if (labels.length !== values.length) {
+    return "Labels and values must have the same length.";
+  }
+  if (values.some((v) => v < 0)) {
+    return "Values must be non-negative.";
+  }
+  if (values.every((v) => v === 0)) {
+    return "At least one value must be positive.";
+  }
+  return null;
+}
 
 const metricConfigs: MetricConfig[] = [
   {
@@ -560,6 +596,7 @@ export default function App() {
   });
   const [comparisonKeys, setComparisonKeys] = useState<string[]>([]);
   const [copilotStatus, setCopilotStatus] = useState("");
+  const [mainChart, setMainChart] = useState<MainChartPayload | null>(null);
   const [pendingScrollTarget, setPendingScrollTarget] =
     useState<ScrollTarget | null>(null);
   const [report, setReport] = useState<BrandReportRow[]>([]);
@@ -609,6 +646,7 @@ export default function App() {
     setViewMode("overview");
     setComparisonKeys([]);
     setCopilotStatus("");
+    setMainChart(null);
   }, [selectedProjectId]);
 
   useEffect(() => {
@@ -705,6 +743,7 @@ export default function App() {
     setViewMode("overview");
     setComparisonKeys([]);
     setCopilotStatus("");
+    setMainChart(null);
     setPendingScrollTarget("mainView");
   }, []);
   const selectCompany = useCallback(
@@ -759,6 +798,9 @@ export default function App() {
         "focusMetric",
         "sortCompanies",
         "compareCompanies",
+        "showPieChart",
+        "showVerticalBarChart",
+        "showLineChart",
       ],
       brands: compactBrands,
       dateRange: { endDate, startDate },
@@ -794,10 +836,15 @@ export default function App() {
   useCopilotAdditionalInstructions(
     {
       instructions: [
+        "For Peec metrics and account data, rely on server Peec AI MCP read",
+        "tools rather than inventing numbers.",
         "Use frontend actions to adapt the dashboard when useful.",
         "Valid metrics are visibility, shareOfVoice, sentiment, and position.",
         "Use company keys from the readable dashboard context.",
         "Prefer UI actions over describing manual click steps.",
+        "Use showPieChart, showVerticalBarChart, or showLineChart on the main",
+        "overview. Line chart: xLabels in order and series[] (label + values",
+        "per line, same length as xLabels).",
       ].join(" "),
     },
     [],
@@ -958,6 +1005,223 @@ export default function App() {
     [findBrand],
   );
 
+  useFrontendTool(
+    {
+      description:
+        "Show a pie chart on the main Brand report overview. Use for share " +
+        "or proportions. Pass parallel labels and values; values must be " +
+        "non-negative. Zero values are ignored. Switches to overview if " +
+        "needed.",
+      handler: ({ labels, title, values }) => {
+        const err = errNonnegLabelValues(labels, values);
+        if (err) {
+          return err;
+        }
+        const trimmed = title?.trim();
+        setActiveCompanyKey("overview");
+        setViewMode("overview");
+        setComparisonKeys([]);
+        setMainChart({
+          kind: "pie",
+          labels,
+          title: trimmed || undefined,
+          values,
+        });
+        setPendingScrollTarget("mainView");
+        setCopilotStatus(
+          trimmed
+            ? `Copilot pie chart: ${trimmed}.`
+            : "Copilot added a pie chart to the overview.",
+        );
+        return trimmed
+          ? `Pie chart shown on the overview: ${trimmed}.`
+          : "Pie chart shown on the main overview page.";
+      },
+      name: "showPieChart",
+      parameters: [
+        {
+          description: "Short title above the chart.",
+          name: "title",
+          required: false,
+          type: "string",
+        },
+        {
+          description: "Label for each slice, same order as values.",
+          name: "labels",
+          required: true,
+          type: "string[]",
+        },
+        {
+          description: "Magnitude for each slice (any non-negative scale).",
+          name: "values",
+          required: true,
+          type: "number[]",
+        },
+      ],
+    },
+    [],
+  );
+
+  useFrontendTool(
+    {
+      description:
+        "Show a vertical bar chart on the main overview. Use for category " +
+        "comparisons. Pass parallel category labels and values; values must " +
+        "be non-negative. Switches to overview if needed.",
+      handler: ({ labels, title, values }) => {
+        const err = errNonnegLabelValues(labels, values);
+        if (err) {
+          return err;
+        }
+        const trimmed = title?.trim();
+        setActiveCompanyKey("overview");
+        setViewMode("overview");
+        setComparisonKeys([]);
+        setMainChart({
+          kind: "vbar",
+          labels,
+          title: trimmed || undefined,
+          values,
+        });
+        setPendingScrollTarget("mainView");
+        setCopilotStatus(
+          trimmed
+            ? `Copilot bar chart: ${trimmed}.`
+            : "Copilot added a bar chart to the overview.",
+        );
+        return trimmed
+          ? `Bar chart on the overview: ${trimmed}.`
+          : "Vertical bar chart shown on the main overview page.";
+      },
+      name: "showVerticalBarChart",
+      parameters: [
+        {
+          description: "Title above the chart.",
+          name: "title",
+          required: false,
+          type: "string",
+        },
+        {
+          description: "Category label for each bar.",
+          name: "labels",
+          required: true,
+          type: "string[]",
+        },
+        {
+          description: "Bar height per category (any non-negative scale).",
+          name: "values",
+          required: true,
+          type: "number[]",
+        },
+      ],
+    },
+    [],
+  );
+
+  useFrontendTool(
+    {
+      description:
+        "Show a line graph (one or more lines) on the main overview. Pass " +
+        "xLabels in time order, then series: each { label, values } with " +
+        "values aligned to xLabels. Compare brands or metrics with several " +
+        "series. yLabel is optional. Use Peec tools first when sourcing data.",
+      handler: ({ series, title, xLabels, yLabel }) => {
+        if (!xLabels?.length) {
+          return "xLabels (time or period names) is required.";
+        }
+        if (!series?.length) {
+          return "series must include at least one { label, values } line.";
+        }
+        const xn = xLabels.length;
+        for (let i = 0; i < series.length; i += 1) {
+          const row = series[i];
+          const lab = String(row?.label ?? "").trim();
+          const vals = row?.values;
+          if (!lab) {
+            return `Line ${i + 1} needs a non-empty label.`;
+          }
+          if (!vals?.length) {
+            return `Line "${lab}" has no values.`;
+          }
+          if (vals.length !== xn) {
+            return (
+              `Line "${lab}": need ${xn} y values to match xLabels.`
+            );
+          }
+        }
+        const trimmed = title?.trim();
+        const yTr = yLabel?.trim();
+        const normalized = series.map((row) => ({
+          label: String(row?.label ?? "").trim(),
+          values: row?.values ?? [],
+        }));
+        setActiveCompanyKey("overview");
+        setViewMode("overview");
+        setComparisonKeys([]);
+        setMainChart({
+          kind: "line",
+          series: normalized,
+          title: trimmed || undefined,
+          xLabels,
+          yLabel: yTr || undefined,
+        });
+        setPendingScrollTarget("mainView");
+        setCopilotStatus(
+          trimmed
+            ? `Copilot line chart: ${trimmed}.`
+            : "Copilot added a line chart to the overview.",
+        );
+        return trimmed
+          ? `Line chart on the overview: ${trimmed}.`
+          : "Line graph shown on the main overview page.";
+      },
+      name: "showLineChart",
+      parameters: [
+        {
+          description: "Title above the chart.",
+          name: "title",
+          required: false,
+          type: "string",
+        },
+        {
+          description: "X-axis (chronological): one label per point.",
+          name: "xLabels",
+          required: true,
+          type: "string[]",
+        },
+        {
+          attributes: [
+            {
+              description: "Legend and tooltip name for this line.",
+              name: "label",
+              required: true,
+              type: "string",
+            },
+            {
+              description: "Y values, one per xLabels index.",
+              name: "values",
+              required: true,
+              type: "number[]",
+            },
+          ],
+          description:
+            "One entry per line/brand/metric. Each values array same length " +
+            "as xLabels.",
+          name: "series",
+          required: true,
+          type: "object[]",
+        },
+        {
+          description: "Optional shared y-axis name (e.g. share, score).",
+          name: "yLabel",
+          required: false,
+          type: "string",
+        },
+      ],
+    },
+    [],
+  );
+
   return (
     <div className="appFrame">
       <main className="shell">
@@ -1093,6 +1357,53 @@ export default function App() {
                   </p>
                 </div>
               </div>
+
+              {mainChart ? (
+                <div className="mainChartBlock">
+                  <div className="mainChartHeader">
+                    <div>
+                      <p className="eyebrow mainChartEyebrow">Copilot</p>
+                      <p className="mainChartDescription">
+                        Chart from the assistant (pie, vertical bars, or
+                        time-series). Dismiss when you are done.
+                      </p>
+                    </div>
+                    <button
+                      className="mainChartDismiss"
+                      onClick={() => {
+                        setMainChart(null);
+                      }}
+                      type="button"
+                    >
+                      Dismiss
+                    </button>
+                  </div>
+                  {mainChart.kind === "pie" ? (
+                    <ChatPieChart
+                      className="pieChart pieChartOnMain"
+                      labels={mainChart.labels}
+                      size={220}
+                      title={mainChart.title}
+                      values={mainChart.values}
+                    />
+                  ) : mainChart.kind === "vbar" ? (
+                    <CopilotVerticalBarChart
+                      className="copilotVBar mainCopilotViz"
+                      labels={mainChart.labels}
+                      title={mainChart.title}
+                      values={mainChart.values}
+                    />
+                  ) : (
+                    <CopilotLineChart
+                      className="copilotLine mainCopilotViz"
+                      series={mainChart.series}
+                      title={mainChart.title}
+                      xLabels={mainChart.xLabels}
+                      yLabel={mainChart.yLabel}
+                    />
+                  )}
+                </div>
+              ) : null}
 
               <div className="chartGrid">
                 {metricConfigs.map((config) => (
